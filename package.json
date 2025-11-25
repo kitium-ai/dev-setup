@@ -1,0 +1,86 @@
+{
+  "name": "@kitiumai/dev-setup",
+  "version": "1.0.0",
+  "description": "CLI to setup development environment for KitiumAI",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "dev-setup": "./bin/dev-setup.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc -w",
+    "start": "node bin/dev-setup.js",
+    "lint": "eslint src/**/*.ts",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc -b --noEmit",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run",
+    "test:watch": "vitest watch",
+    "format": "prettier --check .",
+    "format:fix": "prettier --write .",
+    "changeset": "ensure-changeset && changeset",
+    "version": "ensure-changeset && changeset version",
+    "publish:set-token": "set-npm-token",
+    "publish:setup": "set-npm-token",
+    "publish:check": "npm whoami --registry https://registry.npmjs.org || npm login --registry https://registry.npmjs.org",
+    "publish:login": "npm login --registry https://registry.npmjs.org",
+    "publish:package": "pnpm run publish:check && pnpm publish --access public --no-git-checks --registry https://registry.npmjs.org",
+    "publish:package:token": "pnpm run publish:setup && pnpm publish --access public --no-git-checks --registry https://registry.npmjs.org",
+    "publish:package:otp": "pnpm run publish:check && pnpm publish --access public --no-git-checks --registry https://registry.npmjs.org --otp",
+    "publish:dry-run": "pnpm publish --access public --no-git-checks --dry-run --registry https://registry.npmjs.org",
+    "publish:dry-run:token": "pnpm run publish:setup && pnpm publish --access public --no-git-checks --dry-run --registry https://registry.npmjs.org",
+    "release": "pnpm version && pnpm install --lockfile-only",
+    "verify": "pnpm run typecheck && pnpm run build"
+  },
+  "keywords": [
+    "cli",
+    "setup",
+    "developer-tools",
+    "kitium",
+    "kitiumai",
+    "dev-setup",
+    "development",
+    "tooling",
+    "automation"
+  ],
+  "author": {
+    "name": "Kitium AI",
+    "url": "https://kitium.ai"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kitium-ai/dev-setup.git"
+  },
+  "homepage": "https://github.com/kitium-ai/dev-setup#readme",
+  "bugs": {
+    "url": "https://github.com/kitium-ai/dev-setup/issues"
+  },
+  "files": [
+    "dist",
+    "bin",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^14.0.2",
+    "enquirer": "^2.4.1",
+    "execa": "^8.0.1",
+    "listr2": "^8.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.6.0",
+    "@kitiumai/scripts": "^0.2.1",
+    "@kitiumai/config": "^1.0.2"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}
