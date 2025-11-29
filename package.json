@@ -1,6 +1,7 @@
 {
   "name": "@kitiumai/dev-setup",
   "version": "1.0.0",
+  "type": "module",
   "description": "CLI to setup development environment for KitiumAI",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -46,7 +47,7 @@
   ],
   "author": {
     "name": "Kitium AI",
-    "url": "https://kitium.ai"
+    "url": "https://kitiumai.com"
   },
   "license": "MIT",
   "repository": {
@@ -71,13 +72,22 @@
     "commander": "^14.0.2",
     "enquirer": "^2.4.1",
     "execa": "^8.0.1",
-    "listr2": "^8.0.0"
+    "listr2": "^8.0.0",
+    "@kitiumai/logger": "^2.0.0",
+    "@kitiumai/types": "^2.0.0",
+    "@kitiumai/utils-ts": "^2.0.1"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",
     "typescript": "^5.6.0",
-    "@kitiumai/scripts": "^0.2.1",
-    "@kitiumai/config": "^1.0.2"
+    "vitest": "^1.0.0",
+    "@kitiumai/scripts": "^1.0.0",
+    "@kitiumai/config": "^2.0.0",
+    "@kitiumai/lint": "^2.0.0",
+    "@kitiumai/vitest-helpers": "^2.0.0",
+    "@kitiumai/test-core": "^2.0.0",
+    "@vitest/coverage-v8": "^2.1.3",
+    "@vitest/ui": "^2.1.3"
   },
   "publishConfig": {
     "access": "public",
