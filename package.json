@@ -2,9 +2,10 @@
   "name": "@kitiumai/dev-setup",
   "version": "1.0.0",
   "type": "module",
-  "description": "CLI to setup development environment for KitiumAI",
+  "description": "Enterprise-grade CLI for bootstrapping and managing KitiumAI development environments with automated toolchain setup",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "sideEffects": false,
   "bin": {
     "dev-setup": "./bin/dev-setup.js"
   },
@@ -43,7 +44,12 @@
     "dev-setup",
     "development",
     "tooling",
-    "automation"
+    "automation",
+    "scaffolding",
+    "onboarding",
+    "productivity",
+    "environment-setup",
+    "engineering-efficiency"
   ],
   "author": {
     "name": "Kitium AI",
@@ -62,7 +68,8 @@
     "dist",
     "bin",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "SECURITY.md"
   ],
   "engines": {
     "node": ">=18.0.0"
