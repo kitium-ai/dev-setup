@@ -8,7 +8,7 @@ import { Listr } from 'listr2';
 import { execa } from 'execa';
 import chalk from 'chalk';
 import { createLogger } from '@kitiumai/logger';
-import { isError } from '@kitiumai/utils-ts';
+import { isError, compact } from '@kitiumai/utils-ts';
 import {
   createSetupContext,
   detectOperatingSystem,
@@ -17,7 +17,15 @@ import {
   safeExecuteCommand,
   validateSetupContext,
 } from './utils.js';
-import { DevTool, Editor, type SetupContext, type SetupConfig, SetupError } from './types.js';
+import { DevTool, Editor, type SetupContext, type SetupConfig } from './types.js';
+import {
+  createSetupContextError,
+  createPackageManagerError,
+  createToolInstallationError,
+  createEditorInstallationError,
+  createCommandExecutionError,
+  extractErrorMetadata,
+} from './utils/errors.js';
 
 const logger = createLogger('dev-setup:cli');
 
@@ -85,8 +93,9 @@ program.action(
 
     // Validate context
     if (!validateSetupContext(context)) {
-      const error = new SetupError('Invalid setup context');
-      logger.error('Setup context validation failed', { error: error.message });
+      const contextError = createSetupContextError('Unable to initialize setup context');
+      const errorMetadata = extractErrorMetadata(contextError);
+      logger.error('Setup context validation failed', { ...errorMetadata });
       console.error(chalk.red('❌ Setup failed: Invalid setup context'));
       process.exit(1);
     }
@@ -123,10 +132,11 @@ program.action(
               const manager = getPackageManager(context.platform);
 
               if (!manager) {
-                throw new SetupError(
+                throw createPackageManagerError(
+                  'detection',
+                  'unknown',
                   'No package manager available for this platform',
-                  undefined,
-                  context.platform
+                  { platform: context.platform }
                 );
               }
 
@@ -180,6 +190,7 @@ program.action(
                 : ['git', 'node', 'graphviz', 'python'];
 
             try {
+              const installStartTime = Date.now();
               logger.info('Installing core tools', {
                 platform: context.platform,
                 tools: coreTools,
@@ -203,11 +214,22 @@ program.action(
                 { platform: context.platform }
               );
 
+              const installDuration = Date.now() - installStartTime;
+              logger.info('Core tools installation completed', {
+                duration: installDuration,
+                tools: coreTools,
+              });
               logTaskResult('Core Tools Installation', 'success');
             } catch (error) {
               const message = isError(error) ? error.message : 'Unknown error';
+              const toolError = createToolInstallationError(
+                coreTools.join(', '),
+                context.platform,
+                message
+              );
+              const errorMetadata = extractErrorMetadata(toolError);
               logger.error('Core tools installation failed', {
-                error: message,
+                ...errorMetadata,
                 platform: context.platform,
               });
               logTaskResult('Core Tools Installation', 'failed', message);
@@ -245,18 +267,29 @@ program.action(
                   }
 
                   try {
+                    const editorStartTime = Date.now();
                     if (context.platform === 'win32') {
                       await execa('choco', ['install', '-y', editor.package]);
                     } else if (context.platform === 'darwin') {
                       await execa('brew', ['install', '--cask', editor.package]);
                     }
 
-                    logger.info(`${editor.name} installed successfully`);
+                    const editorDuration = Date.now() - editorStartTime;
+                    logger.info(`${editor.name} installed successfully`, {
+                      editor: editor.name,
+                      duration: editorDuration,
+                    });
                     context.installedEditors.add(editor.tool);
                     logTaskResult(`${editor.name} Installation`, 'success');
                   } catch (error) {
                     const message = isError(error) ? error.message : 'Unknown error';
-                    logger.warn(`Failed to install ${editor.name}`, { error: message });
+                    const editorError = createEditorInstallationError(
+                      editor.name,
+                      context.platform,
+                      message
+                    );
+                    const errorMetadata = extractErrorMetadata(editorError);
+                    logger.warn(`Failed to install ${editor.name}`, { ...errorMetadata });
                     logTaskResult(
                       `${editor.name} Installation`,
                       'skipped',
@@ -273,13 +306,17 @@ program.action(
           title: 'Setup Node.js Tools',
           task: async (_ctx) => {
             try {
+              const corepackStartTime = Date.now();
               logger.info('Enabling corepack');
               await execa('corepack', ['enable']);
-              logger.info('Corepack enabled successfully');
+              const corepackDuration = Date.now() - corepackStartTime;
+              logger.info('Corepack enabled successfully', { duration: corepackDuration });
               logTaskResult('Corepack Setup', 'success');
             } catch (error) {
               const message = isError(error) ? error.message : 'Unknown error';
-              logger.error('Corepack setup failed', { error: message });
+              const cmdError = createCommandExecutionError('corepack enable', 1, message);
+              const errorMetadata = extractErrorMetadata(cmdError);
+              logger.error('Corepack setup failed', { ...errorMetadata });
               logTaskResult('Corepack Setup', 'failed', message);
               throw error;
             }
@@ -289,28 +326,37 @@ program.action(
       { renderer: 'default' }
     );
 
+    const setupStartTime = Date.now();
     try {
       await tasks.run(context);
 
+      const setupDuration = Date.now() - setupStartTime;
+      const completedEditors = Array.from(context.installedEditors);
+      const taskSuccessCount = compact(
+        context.taskResults.map((t) => (t.status === 'success' ? t : null))
+      ).length;
+
       logger.info('Setup completed successfully', {
-        installTime: new Date().toISOString(),
+        duration: setupDuration,
+        completedAt: new Date().toISOString(),
         installedTools: Array.from(context.installedTools),
-        installedEditors: Array.from(context.installedEditors),
+        installedEditors: completedEditors,
+        taskSuccessCount,
+        totalTasks: context.taskResults.length,
       });
 
       console.log(chalk.green('\n✅ Setup complete!'));
       console.log(chalk.gray('\nSetup Summary:'));
       console.log(chalk.gray(`  Platform: ${context.platform}`));
       console.log(chalk.gray(`  Package Manager: ${context.packageManager}`));
-      console.log(
-        chalk.gray(
-          `  Installed Editors: ${Array.from(context.installedEditors).join(', ') || 'none'}`
-        )
-      );
+      console.log(chalk.gray(`  Installed Editors: ${completedEditors.join(', ') || 'none'}`));
+      console.log(chalk.gray(`  Duration: ${setupDuration}ms`));
     } catch (error) {
+      const setupDuration = Date.now() - setupStartTime;
       const message = isError(error) ? error.message : 'Unknown error occurred';
 
       logger.error('Setup failed', {
+        duration: setupDuration,
         error: message,
         stack: isError(error) ? error.stack : undefined,
         context: {
