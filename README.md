@@ -7,11 +7,12 @@ Enterprise-ready development environment setup CLI for KitiumAI projects, powere
 
 ## Features
 
-🚀 **Automated Setup** - Automatically detect OS and install required development tools
+🚀 **Automated Setup** - Automatically detect OS and install required development tools with idempotent checks
+🛡️ **Preflight Assurance** - Disk, privilege, and network preflight checks guard against partial installs
 📊 **Structured Logging** - Enterprise-grade logging with @kitiumai/logger
 🔒 **Type-Safe** - Full TypeScript support with @kitiumai/types
 ✅ **Validated** - Runtime validation using @kitiumai/utils-ts
-⚙️ **Configurable** - Skip tools, editors, or run in interactive mode
+⚙️ **Configurable** - Skip tools, editors, block/allow lists, dry-run previews, or run in interactive mode
 🧪 **Well-Tested** - Comprehensive unit test coverage
 
 ## Installation
@@ -48,6 +49,12 @@ dev-setup --skip-editors cursor,antigravity
 
 # Interactive mode
 dev-setup --interactive
+
+# Dry-run mode with retry tuning
+dev-setup --dry-run --max-retries 2
+
+# Enforce allow/block policies
+dev-setup --allow git,node --block cursor
 ```
 
 ## Usage
@@ -140,6 +147,11 @@ interface SetupConfig {
   interactive?: boolean;
   verbose?: boolean;
   logLevel?: 'debug' | 'info' | 'warn' | 'error';
+  dryRun?: boolean;
+  allowlist?: (DevTool | Editor)[];
+  blocklist?: (DevTool | Editor)[];
+  telemetry?: boolean;
+  maxRetries?: number;
 }
 ```
 
@@ -189,7 +201,16 @@ Get the appropriate package manager for the platform.
 
 ```typescript
 const manager = getPackageManager('darwin');
-// Returns: 'homebrew' | 'chocolatey' | 'apt' | undefined
+// Returns: 'homebrew' | 'chocolatey' | 'apt' | 'winget' | 'scoop' | 'yum' | 'zypper' | 'pacman' | undefined
+```
+
+#### `detectPackageManagerAvailability(platform)`
+
+Return a set of detected package managers for the current OS.
+
+```typescript
+const managers = detectPackageManagerAvailability('linux');
+// Returns: Set<'apt' | 'yum' | 'zypper' | 'pacman'>
 ```
 
 #### `createSetupContext()`
@@ -199,6 +220,15 @@ Create a new setup context with initialized state.
 ```typescript
 const context = createSetupContext();
 // Returns: SetupContext
+```
+
+#### `runPreflightChecks()`
+
+Perform privilege, disk, and network reachability checks.
+
+```typescript
+const preflight = await runPreflightChecks();
+// Returns: { hasSudo: boolean; diskSpaceMb?: number; networkReachable: boolean; warnings: string[] }
 ```
 
 #### `validateSetupContext(context)`
@@ -228,6 +258,18 @@ const message = formatErrorMessage(error, DevTool.Git, 'win32');
 // Returns: formatted error string
 ```
 
+#### `safeExecuteCommand(fn, fallback, options?)`
+
+Execute an async command with retries and dry-run support.
+
+```typescript
+await safeExecuteCommand(
+  () => execa('brew', ['install', 'git']),
+  false,
+  { retries: 2, backoffMs: 500, commandLabel: 'git install' }
+);
+```
+
 #### `groupToolsByPriority(tools)`
 
 Group tools into essential and optional categories.
@@ -247,6 +289,7 @@ import {
   detectOperatingSystem,
   getPackageManager,
   validateSetupContext,
+  runPreflightChecks,
 } from '@kitiumai/dev-setup';
 import { createLogger } from '@kitiumai/logger';
 
@@ -259,6 +302,12 @@ const context = createSetupContext();
 if (!validateSetupContext(context)) {
   logger.error('Invalid setup context');
   process.exit(1);
+}
+
+// Preflight checks
+const preflight = await runPreflightChecks();
+if (preflight.warnings.length) {
+  logger.warn({ preflight }, 'Preflight warnings detected');
 }
 
 // Get platform info
@@ -276,6 +325,7 @@ The CLI automatically logs all operations:
 $ dev-setup --verbose
 🚀 Starting KitiumAI Development Environment Setup
 
+✓ Preflight Checks
 ✓ Check Operating System
 ✓ Check Package Manager
 ✓ Install Core Tools

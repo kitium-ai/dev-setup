@@ -11,7 +11,16 @@ export type OperatingSystem = 'win32' | 'darwin' | 'linux';
 /**
  * Package manager types
  */
-export type PackageManager = 'chocolatey' | 'homebrew' | 'apt' | 'brew';
+export type PackageManager =
+  | 'chocolatey'
+  | 'homebrew'
+  | 'apt'
+  | 'brew'
+  | 'winget'
+  | 'scoop'
+  | 'yum'
+  | 'zypper'
+  | 'pacman';
 
 /**
  * Core development tools
@@ -51,6 +60,8 @@ export interface SetupContext {
   installedTools: Set<DevTool>;
   installedEditors: Set<Editor>;
   taskResults: SetupTaskResult[];
+  metrics: SetupMetrics;
+  preflight?: PreflightResult;
 }
 
 /**
@@ -62,6 +73,11 @@ export interface SetupConfig {
   interactive?: boolean;
   verbose?: boolean;
   logLevel?: 'debug' | 'info' | 'warn' | 'error';
+  dryRun?: boolean;
+  allowlist?: (DevTool | Editor)[];
+  blocklist?: (DevTool | Editor)[];
+  telemetry?: boolean;
+  maxRetries?: number;
 }
 
 /**
@@ -74,6 +90,24 @@ export interface ToolInstruction {
   command: string[];
   description: string;
   manualUrl?: string;
+}
+
+/**
+ * Preflight check result capturing readiness signals
+ */
+export interface PreflightResult {
+  hasSudo: boolean;
+  diskSpaceMb?: number;
+  networkReachable: boolean;
+  warnings: string[];
+}
+
+/**
+ * Basic setup metrics for observability
+ */
+export interface SetupMetrics {
+  taskTimings: Record<string, number>;
+  attempts: Record<string, number>;
 }
 
 /**
