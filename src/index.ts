@@ -14,6 +14,8 @@ import {
   detectOperatingSystem,
   getPackageManager,
   getPackageManagerInstruction,
+  isToolAvailable,
+  runPreflightChecks,
   safeExecuteCommand,
   validateSetupContext,
 } from './utils.js';
@@ -61,7 +63,11 @@ program
   .option('-v, --verbose', 'Enable verbose logging')
   .option('--skip-tools <tools>', 'Skip specific tools (comma-separated)')
   .option('--skip-editors <editors>', 'Skip specific editors (comma-separated)')
-  .option('--interactive', 'Run in interactive mode');
+  .option('--interactive', 'Run in interactive mode')
+  .option('--dry-run', 'Preview tasks without executing commands')
+  .option('--max-retries <count>', 'Retries for idempotent commands', Number)
+  .option('--allow <items>', 'Comma-separated allowlist of tools/editors')
+  .option('--block <items>', 'Comma-separated blocklist of tools/editors');
 
 /**
  * Main setup action handler
@@ -72,6 +78,10 @@ program.action(
     skipTools?: string;
     skipEditors?: string;
     interactive?: boolean;
+    dryRun?: boolean;
+    maxRetries?: number;
+    allow?: string;
+    block?: string;
   }) => {
     logger.info('Starting KitiumAI Development Environment Setup', {
       options,
@@ -86,6 +96,10 @@ program.action(
       interactive: options.interactive,
       skipTools: options.skipTools ? (options.skipTools.split(',') as DevTool[]) : undefined,
       skipEditors: options.skipEditors ? (options.skipEditors.split(',') as Editor[]) : undefined,
+      dryRun: options.dryRun,
+      maxRetries: options.maxRetries,
+      allowlist: options.allow ? (options.allow.split(',') as (DevTool | Editor)[]) : undefined,
+      blocklist: options.block ? (options.block.split(',') as (DevTool | Editor)[]) : undefined,
     };
 
     // Create setup context
@@ -108,6 +122,20 @@ program.action(
     const tasks = new Listr<SetupContext>(
       [
         {
+          title: 'Preflight Checks',
+          task: async (ctx) => {
+            const preflight = await runPreflightChecks();
+            ctx.preflight = preflight;
+            ctx.taskResults.push({ name: 'Preflight Checks', status: 'success' });
+            logger.info('Preflight checks complete', preflight);
+
+            preflight.warnings.forEach((warning) => {
+              logger.warn(warning);
+              console.warn(chalk.yellow(`⚠️  ${warning}`));
+            });
+          },
+        },
+        {
           title: 'Check Operating System',
           task: async (_ctx) => {
             try {
@@ -117,10 +145,12 @@ program.action(
 
               logger.info('Operating system detected', { platform, platformName });
               logTaskResult('OS Detection', 'success', `${platformName} detected`);
+              context.taskResults.push({ name: 'OS Detection', status: 'success' });
             } catch (error) {
               const message = isError(error) ? error.message : 'Unknown error';
               logger.error('OS detection failed', { error: message });
               logTaskResult('OS Detection', 'failed', message);
+              context.taskResults.push({ name: 'OS Detection', status: 'failed', message });
               throw error;
             }
           },
@@ -148,8 +178,10 @@ program.action(
                     await execa('choco', ['--version']);
                   } else if (manager === 'homebrew') {
                     await execa('brew', ['--version']);
-                  } else if (manager === 'apt') {
-                    await execa('apt-get', ['--version']);
+                  } else if (manager === 'apt' || manager === 'yum' || manager === 'zypper' || manager === 'pacman') {
+                    await execa(manager === 'pacman' ? 'pacman' : `${manager}`, ['--version']);
+                  } else if (manager === 'winget' || manager === 'scoop') {
+                    await execa(manager, ['--version']);
                   }
                   return true;
                 },
@@ -157,6 +189,9 @@ program.action(
                 {
                   tool: 'package-manager' as unknown as DevTool | Editor,
                   platform: context.platform,
+                  retries: config.maxRetries ?? 1,
+                  commandLabel: 'Package manager verification',
+                  dryRun: config.dryRun,
                 }
               ).catch(() => {
                 const message = `${manager} is not installed. Please install from: ${instruction?.url}`;
@@ -166,10 +201,12 @@ program.action(
               });
 
               logTaskResult(`${manager} Check`, 'success');
+              context.taskResults.push({ name: 'Package Manager Check', status: 'success' });
             } catch (error) {
               const message = isError(error) ? error.message : 'Unknown error';
               logger.error('Package manager check failed', { error: message });
               logTaskResult('Package Manager Check', 'failed', message);
+              context.taskResults.push({ name: 'Package Manager Check', status: 'failed', message });
             }
           },
         },
@@ -186,44 +223,117 @@ program.action(
 
             const coreTools =
               context.platform === 'win32'
-                ? ['git', 'nodejs-lts', 'graphviz', 'python']
-                : ['git', 'node', 'graphviz', 'python'];
+                ? [
+                    { package: 'git', command: 'git', label: DevTool.Git },
+                    { package: 'nodejs-lts', command: 'node', label: DevTool.Node },
+                    { package: 'graphviz', command: 'dot', label: DevTool.GraphViz },
+                    { package: 'python', command: 'python', label: DevTool.Python },
+                  ]
+                : [
+                    { package: 'git', command: 'git', label: DevTool.Git },
+                    { package: 'node', command: 'node', label: DevTool.Node },
+                    { package: 'graphviz', command: 'dot', label: DevTool.GraphViz },
+                    { package: 'python', command: 'python3', label: DevTool.Python },
+                  ];
 
             try {
               const installStartTime = Date.now();
               logger.info('Installing core tools', {
                 platform: context.platform,
-                tools: coreTools,
+                tools: coreTools.map((tool) => tool.package),
               });
+
+              const policyFiltered = coreTools.filter((tool) => {
+                if (config.blocklist?.includes(tool.label)) {
+                  logger.warn(`${tool.label} blocked by policy`);
+                  context.taskResults.push({
+                    name: `${tool.label} Installation`,
+                    status: 'skipped',
+                    message: 'Blocked by policy',
+                  });
+                  return false;
+                }
+                if (config.allowlist && !config.allowlist.includes(tool.label)) {
+                  logger.info(`${tool.label} not in allowlist; skipping`);
+                  return false;
+                }
+                return true;
+              });
+
+              const missingTools = policyFiltered.filter((tool) => !isToolAvailable(tool.command));
+              if (!policyFiltered.length) {
+                logger.info('Core tools skipped due to allow/block policy');
+                context.taskResults.push({
+                  name: 'Core Tools Installation',
+                  status: 'skipped',
+                  message: 'Policy enforcement',
+                });
+                return;
+              }
+
+              if (!missingTools.length) {
+                logger.info('All core tools already available');
+                coreTools.forEach((tool) => context.installedTools.add(tool.label));
+                logTaskResult('Core Tools Installation', 'skipped', 'Already installed');
+                context.taskResults.push({
+                  name: 'Core Tools Installation',
+                  status: 'skipped',
+                  message: 'Already installed',
+                });
+                return;
+              }
 
               await safeExecuteCommand(
                 async () => {
+                  if (config.dryRun) {
+                    logger.info('Dry-run enabled; skipping core tool execution');
+                    return;
+                  }
+
+                  const packages = missingTools.map((tool) => tool.package);
+
                   if (context.platform === 'win32' && context.packageManager === 'chocolatey') {
-                    await execa('choco', ['install', '-y', ...coreTools]);
+                    await execa('choco', ['install', '-y', ...packages]);
+                  } else if (context.platform === 'win32' && context.packageManager === 'winget') {
+                    await execa('winget', ['install', '--silent', ...packages]);
                   } else if (
                     context.platform === 'darwin' &&
                     context.packageManager === 'homebrew'
                   ) {
-                    await execa('brew', ['install', ...coreTools]);
+                    await execa('brew', ['install', ...packages]);
+                  } else if (context.platform === 'linux' && context.packageManager) {
+                    const command = context.packageManager === 'pacman' ? 'pacman' : context.packageManager;
+                    const args =
+                      context.packageManager === 'pacman'
+                        ? ['-S', '--noconfirm', ...packages]
+                        : ['install', '-y', ...packages];
+                    await execa(command, args);
                   } else {
                     logger.warn('Manual installation required for this platform');
                     return;
                   }
                 },
                 undefined,
-                { platform: context.platform }
+                {
+                  platform: context.platform,
+                  retries: config.maxRetries ?? 1,
+                  commandLabel: 'Core tools install',
+                  dryRun: config.dryRun,
+                }
               );
 
               const installDuration = Date.now() - installStartTime;
               logger.info('Core tools installation completed', {
                 duration: installDuration,
-                tools: coreTools,
+                tools: coreTools.map((tool) => tool.package),
               });
               logTaskResult('Core Tools Installation', 'success');
+              missingTools.forEach((tool) => context.installedTools.add(tool.label));
+              context.taskResults.push({ name: 'Core Tools Installation', status: 'success' });
             } catch (error) {
               const message = isError(error) ? error.message : 'Unknown error';
               const toolError = createToolInstallationError(
-                coreTools.join(', '),
+                coreTools.map((tool) => tool.package).join(', '),
                 context.platform,
                 message
               );
@@ -261,8 +371,27 @@ program.action(
               editors.map((editor) => ({
                 title: editor.name,
                 task: async (_subCtx) => {
+                  if (config.blocklist?.includes(editor.tool)) {
+                    logger.warn(`${editor.name} is blocked by policy`);
+                    context.taskResults.push({
+                      name: `${editor.name} Installation`,
+                      status: 'skipped',
+                      message: 'Blocked by policy',
+                    });
+                    return;
+                  }
+                  if (config.allowlist && !config.allowlist.includes(editor.tool)) {
+                    logger.info(`${editor.name} not in allowlist; skipping`);
+                    return;
+                  }
                   if (config.skipEditors?.includes(editor.tool)) {
                     logger.info(`Skipping ${editor.name} installation`);
+                    return;
+                  }
+                  if (isToolAvailable(editor.package)) {
+                    logger.info(`${editor.name} already present; skipping install`);
+                    context.installedEditors.add(editor.tool);
+                    logTaskResult(`${editor.name} Installation`, 'skipped', 'Already installed');
                     return;
                   }
 
@@ -272,6 +401,10 @@ program.action(
                       await execa('choco', ['install', '-y', editor.package]);
                     } else if (context.platform === 'darwin') {
                       await execa('brew', ['install', '--cask', editor.package]);
+                    } else if (context.platform === 'linux' && context.packageManager) {
+                      const manager = context.packageManager === 'pacman' ? 'pacman' : context.packageManager;
+                      const args = context.packageManager === 'pacman' ? ['-S', '--noconfirm', editor.package] : ['install', '-y', editor.package];
+                      await execa(manager, args);
                     }
 
                     const editorDuration = Date.now() - editorStartTime;
@@ -281,6 +414,10 @@ program.action(
                     });
                     context.installedEditors.add(editor.tool);
                     logTaskResult(`${editor.name} Installation`, 'success');
+                    context.taskResults.push({
+                      name: `${editor.name} Installation`,
+                      status: 'success',
+                    });
                   } catch (error) {
                     const message = isError(error) ? error.message : 'Unknown error';
                     const editorError = createEditorInstallationError(
@@ -295,6 +432,11 @@ program.action(
                       'skipped',
                       `Please install manually from ${editor.name} website`
                     );
+                    context.taskResults.push({
+                      name: `${editor.name} Installation`,
+                      status: 'skipped',
+                      message: message,
+                    });
                   }
                 },
               })),
@@ -308,16 +450,20 @@ program.action(
             try {
               const corepackStartTime = Date.now();
               logger.info('Enabling corepack');
-              await execa('corepack', ['enable']);
+              if (!config.dryRun) {
+                await execa('corepack', ['enable']);
+              }
               const corepackDuration = Date.now() - corepackStartTime;
               logger.info('Corepack enabled successfully', { duration: corepackDuration });
               logTaskResult('Corepack Setup', 'success');
+              context.taskResults.push({ name: 'Corepack Setup', status: 'success' });
             } catch (error) {
               const message = isError(error) ? error.message : 'Unknown error';
               const cmdError = createCommandExecutionError('corepack enable', 1, message);
               const errorMetadata = extractErrorMetadata(cmdError);
               logger.error('Corepack setup failed', { ...errorMetadata });
               logTaskResult('Corepack Setup', 'failed', message);
+              context.taskResults.push({ name: 'Corepack Setup', status: 'failed', message });
               throw error;
             }
           },
