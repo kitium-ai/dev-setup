@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [v2.0.0] - 2025-12-01
 - Added preflight checks (privilege, disk space, network reachability) before running installs.
 - Improved package manager detection with multiple fallbacks across Windows, macOS, and Linux.
 - Introduced policy-aware CLI options (allow/block lists), dry-run preview mode, and retry tuning.
